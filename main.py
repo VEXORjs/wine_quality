@@ -81,7 +81,7 @@ adam = optim.Adam(model.parameters(), lr=0.001)
 criterion = nn.MSELoss()
 
 epochs = 10
-patience = 5
+patience = 2
 patience_counter = 0
 best_val_loss = float("inf")
 best_model_weights = None
@@ -120,7 +120,7 @@ for epoch in range(epochs):
         patience_counter += 1
 
     if patience_counter >= patience:
-        print(f"\n🛑 EARLY STOPPING zadziałał w epoce {epoch + 1}!")
+        print(f"\n EARLY STOPPING zadziałał w epoce {epoch + 1}!")
         print(f"Brak poprawy od {patience} epok. Przywracam najlepsze wagi.")
         break
 
