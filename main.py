@@ -2,6 +2,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import copy
 from torch.utils.data import Dataset, DataLoader
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
@@ -46,13 +47,14 @@ dataset = WineDataset(X_train_scaled, y_train)
 dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
 
 class TabularTransformer(nn.Module):
-    def __init__(self, num_features=12, embed_dim=64, num_heads=4):
+    def __init__(self, num_features=12, embed_dim=64, num_heads=4, dropout_rate=0.2):
         super().__init__()
         self.value_embedding = nn.Linear(1, embed_dim)
         self.feature_embedding = nn.Embedding(num_features, embed_dim)
 
-        encoded_layer = nn.TransformerEncoderLayer(d_model=embed_dim, nhead=num_heads, batch_first=True)
+        encoded_layer = nn.TransformerEncoderLayer(d_model=embed_dim, nhead=num_heads, dropout=dropout_rate, batch_first=True)
         self.transformer = nn.TransformerEncoder(encoded_layer, num_layers=3)
+        self.dropout = nn.Dropout(p=dropout_rate)
         self.output_layer = nn.Linear(embed_dim, 1)
 
     def forward(self, x):
@@ -70,16 +72,26 @@ class TabularTransformer(nn.Module):
 
         pooled_output = transformed_output.mean(dim=1)
 
-        return self.output_layer(pooled_output)
+        dropout_output = self.dropout(pooled_output)
+
+        return self.output_layer(dropout_output)
 
 model = TabularTransformer()
 adam = optim.Adam(model.parameters(), lr=0.001)
 criterion = nn.MSELoss()
 
 epochs = 10
-model.train()
+patience = 5
+patience_counter = 0
+best_val_loss = float("inf")
+best_model_weights = None
 
+X_test_tensor = torch.tensor(X_test_scaled, dtype=torch.float32)
+y_test_tensor = torch.tensor(y_test, dtype=torch.float32)
+
+print("Rozpoczynam trenowanie modelu...")
 for epoch in range(epochs):
+    model.train()
     total_loss = 0
     for x_batch, y_batch in dataloader:
         adam.zero_grad()
@@ -89,16 +101,31 @@ for epoch in range(epochs):
         adam.step()
         total_loss += loss.item()
 
-    print(f"Epoch {epoch+1}/{epochs}, MSE: {total_loss/len(dataloader):.4f}")
+    train_loss = total_loss / len(dataloader)
+    print(f"Epoch {epoch + 1}/{epochs}, MSE: {train_loss:.4f}")
 
-model.eval()
+    model.eval()
+    with torch.no_grad():
 
-with torch.no_grad():
-    X_test_tensor = torch.tensor(X_test_scaled, dtype=torch.float32)
-    y_test_tensor = torch.tensor(y_test, dtype=torch.float32)
+        test_predictions = model(X_test_tensor)
 
-    test_predictions = model(X_test_tensor)
+        test_loss = criterion(test_predictions.squeeze(), y_test_tensor).item()
 
-    test_loss = criterion(test_predictions.squeeze(), y_test_tensor)
+    if test_loss < best_val_loss:
+        best_val_loss = test_loss
+        patience_counter = 0
+        best_model_weights = copy.deepcopy(model.state_dict())
 
-print(f"Test MSE: {test_loss.item():.4f}")
+    else:
+        patience_counter += 1
+
+    if patience_counter >= patience:
+        print(f"\n🛑 EARLY STOPPING zadziałał w epoce {epoch + 1}!")
+        print(f"Brak poprawy od {patience} epok. Przywracam najlepsze wagi.")
+        break
+
+if best_model_weights is not None:
+    model.load_state_dict(best_model_weights)
+
+print("-" * 30)
+print(f"Ostateczny wynik - test MSE: {best_val_loss:.4f}")
